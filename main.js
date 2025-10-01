@@ -1,5 +1,4 @@
-
-import { invaderShape, getInvaderInstanceData, invaderShader } from './invader.js';
+import { createInvaderVertices, invaderShader } from './invader.js';
 import { createParticleSystem, particleShader } from './particle.js';
 
 // Ensure glMatrix is available
@@ -40,21 +39,12 @@ async function main() {
     //================================================================
 
     // -- Invader Geometry --
-    // prettier-ignore
-    const cubeVertices = new Float32Array([
-        -0.5,-0.5, 0.5, 1,0,0, 0,0,1,  0.5,-0.5, 0.5, 1,0,0, 0,0,1,  0.5, 0.5, 0.5, 1,0,0, 0,0,1, -0.5,-0.5, 0.5, 1,0,0, 0,0,1,  0.5, 0.5, 0.5, 1,0,0, 0,0,1, -0.5, 0.5, 0.5, 1,0,0, 0,0,1,
-        -0.5,-0.5,-0.5, 1,0,0, 0,0,-1, -0.5, 0.5,-0.5, 1,0,0, 0,0,-1,  0.5, 0.5,-0.5, 1,0,0, 0,0,-1, -0.5,-0.5,-0.5, 1,0,0, 0,0,-1,  0.5, 0.5,-0.5, 1,0,0, 0,0,-1,  0.5,-0.5,-0.5, 1,0,0, 0,0,-1,
-        -0.5, 0.5,-0.5, 1,0,0, 0,1,0, -0.5, 0.5, 0.5, 1,0,0, 0,1,0,  0.5, 0.5, 0.5, 1,0,0, 0,1,0, -0.5, 0.5,-0.5, 1,0,0, 0,1,0,  0.5, 0.5, 0.5, 1,0,0, 0,1,0,  0.5, 0.5,-0.5, 1,0,0, 0,1,0,
-        -0.5,-0.5,-0.5, 1,0,0, 0,-1,0,  0.5,-0.5,-0.5, 1,0,0, 0,-1,0,  0.5,-0.5, 0.5, 1,0,0, 0,-1,0, -0.5,-0.5,-0.5, 1,0,0, 0,-1,0,  0.5,-0.5, 0.5, 1,0,0, 0,-1,0, -0.5,-0.5, 0.5, 1,0,0, 0,-1,0,
-         0.5,-0.5,-0.5, 1,0,0, 1,0,0,  0.5, 0.5,-0.5, 1,0,0, 1,0,0,  0.5, 0.5, 0.5, 1,0,0, 1,0,0,  0.5,-0.5,-0.5, 1,0,0, 1,0,0,  0.5, 0.5, 0.5, 1,0,0, 1,0,0,  0.5,-0.5, 0.5, 1,0,0, 1,0,0,
-        -0.5,-0.5,-0.5, 1,0,0, -1,0,0, -0.5,-0.5, 0.5, 1,0,0, -1,0,0, -0.5, 0.5, 0.5, 1,0,0, -1,0,0, -0.5,-0.5,-0.5, 1,0,0, -1,0,0, -0.5, 0.5, 0.5, 1,0,0, -1,0,0, -0.5, 0.5,-0.5, 1,0,0, -1,0,0,
-    ]);
-    const invaderInstanceData = getInvaderInstanceData();
-
-    const cubeVertexBuffer = device.createBuffer({ size: cubeVertices.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(cubeVertexBuffer, 0, cubeVertices);
-    const invaderInstanceBuffer = device.createBuffer({ size: invaderInstanceData.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(invaderInstanceBuffer, 0, invaderInstanceData);
+    const invaderVertices = createInvaderVertices();
+    const invaderVertexBuffer = device.createBuffer({
+        size: invaderVertices.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(invaderVertexBuffer, 0, invaderVertices);
     
     // -- Particle System for 3D Flames --
     const { particleInstanceBuffer, updateParticles, getActiveParticleCount } = createParticleSystem(device);
@@ -97,10 +87,24 @@ async function main() {
     const invaderPipeline = device.createRenderPipeline({
         label: 'Invader Pipeline',
         layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-        vertex: { module: invaderShaderModule, entryPoint: 'vs_main', buffers: [ { arrayStride: 9 * 4, attributes: [ { shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 3 * 4, format: 'float32x3' }, { shaderLocation: 3, offset: 6 * 4, format: 'float32x3' }, ], }, { arrayStride: 3 * 4, stepMode: 'instance', attributes: [ { shaderLocation: 2, offset: 0, format: 'float32x3' } ], } ] },
+        vertex: {
+            module: invaderShaderModule,
+            entryPoint: 'vs_main',
+            buffers: [
+                {
+                    arrayStride: 11 * 4, // 3 pos, 3 color, 3 normal, 2 uv
+                    attributes: [
+                        { shaderLocation: 0, offset: 0, format: 'float32x3' }, // pos
+                        { shaderLocation: 1, offset: 3 * 4, format: 'float32x3' }, // color
+                        { shaderLocation: 3, offset: 6 * 4, format: 'float32x3' }, // normal
+                        // uv attribute would go here if we were using it
+                    ],
+                },
+            ],
+        },
         fragment: { module: invaderShaderModule, entryPoint: 'fs_main', targets: [{ format: canvasFormat }] },
         primitive: { topology: 'triangle-list' },
-        depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus', depthBias: 0, depthBiasSlopeScale: 0 },
+        depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus', depthBias: 2, depthBiasSlopeScale: 2 },
         multisample: { count: 1 },
     });
 
@@ -186,9 +190,8 @@ async function main() {
 
         passEncoder.setPipeline(invaderPipeline);
         passEncoder.setBindGroup(0, bindGroup);
-        passEncoder.setVertexBuffer(0, cubeVertexBuffer);
-        passEncoder.setVertexBuffer(1, invaderInstanceBuffer);
-        passEncoder.draw(36, invaderShape.length, 0, 0);
+        passEncoder.setVertexBuffer(0, invaderVertexBuffer);
+        passEncoder.draw(invaderVertices.length / 11, 1, 0, 0); // 11 floats per vertex
 
         const activeParticleCount = getActiveParticleCount();
         if (activeParticleCount > 0) {
