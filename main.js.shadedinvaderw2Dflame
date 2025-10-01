@@ -1,0 +1,426 @@
+// Ensure glMatrix is available
+const { mat4, vec3 } = glMatrix;
+
+async function main() {
+    // 1. SETUP: Get device and configure canvas
+    //================================================================
+    const canvas = document.getElementById('webgpu-canvas');
+    if (!navigator.gpu) {
+        throw new Error("WebGPU not supported on this browser.");
+    }
+
+    // *** FIX: Handle high-DPI screens ***
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    const presentationSize = [
+        canvas.clientWidth * devicePixelRatio,
+        canvas.clientHeight * devicePixelRatio,
+    ];
+    canvas.width = presentationSize[0];
+    canvas.height = presentationSize[1];
+
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+        throw new Error("No appropriate GPUAdapter found.");
+    }
+
+    const device = await adapter.requestDevice();
+    const context = canvas.getContext('webgpu');
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    
+    context.configure({
+        device: device,
+        format: canvasFormat,
+        alphaMode: 'premultiplied',
+    });
+
+    // 2. GEOMETRY & DATA: Define the shape of our objects
+    //================================================================
+
+    // prettier-ignore
+    const cubeVertices = new Float32Array([
+        // pos(x,y,z),    color(r,g,b),   normal(x,y,z)
+        -0.5, -0.5,  0.5,   1, 0, 0,   0, 0, 1,
+         0.5, -0.5,  0.5,   1, 0, 0,   0, 0, 1,
+         0.5,  0.5,  0.5,   1, 0, 0,   0, 0, 1,
+        -0.5, -0.5,  0.5,   1, 0, 0,   0, 0, 1,
+         0.5,  0.5,  0.5,   1, 0, 0,   0, 0, 1,
+        -0.5,  0.5,  0.5,   1, 0, 0,   0, 0, 1,
+        -0.5, -0.5, -0.5,   1, 0, 0,   0, 0, -1,
+        -0.5,  0.5, -0.5,   1, 0, 0,   0, 0, -1,
+         0.5,  0.5, -0.5,   1, 0, 0,   0, 0, -1,
+        -0.5, -0.5, -0.5,   1, 0, 0,   0, 0, -1,
+         0.5,  0.5, -0.5,   1, 0, 0,   0, 0, -1,
+         0.5, -0.5, -0.5,   1, 0, 0,   0, 0, -1,
+        -0.5,  0.5, -0.5,   1, 0, 0,   0, 1, 0,
+        -0.5,  0.5,  0.5,   1, 0, 0,   0, 1, 0,
+         0.5,  0.5,  0.5,   1, 0, 0,   0, 1, 0,
+        -0.5,  0.5, -0.5,   1, 0, 0,   0, 1, 0,
+         0.5,  0.5,  0.5,   1, 0, 0,   0, 1, 0,
+         0.5,  0.5, -0.5,   1, 0, 0,   0, 1, 0,
+        -0.5, -0.5, -0.5,   1, 0, 0,   0, -1, 0,
+         0.5, -0.5, -0.5,   1, 0, 0,   0, -1, 0,
+         0.5, -0.5,  0.5,   1, 0, 0,   0, -1, 0,
+        -0.5, -0.5, -0.5,   1, 0, 0,   0, -1, 0,
+         0.5, -0.5,  0.5,   1, 0, 0,   0, -1, 0,
+        -0.5, -0.5,  0.5,   1, 0, 0,   0, -1, 0,
+         0.5, -0.5, -0.5,   1, 0, 0,   1, 0, 0,
+         0.5,  0.5, -0.5,   1, 0, 0,   1, 0, 0,
+         0.5,  0.5,  0.5,   1, 0, 0,   1, 0, 0,
+         0.5, -0.5, -0.5,   1, 0, 0,   1, 0, 0,
+         0.5,  0.5,  0.5,   1, 0, 0,   1, 0, 0,
+         0.5, -0.5,  0.5,   1, 0, 0,   1, 0, 0,
+        -0.5, -0.5, -0.5,   1, 0, 0,  -1, 0, 0,
+        -0.5, -0.5,  0.5,   1, 0, 0,  -1, 0, 0,
+        -0.5,  0.5,  0.5,   1, 0, 0,  -1, 0, 0,
+        -0.5, -0.5, -0.5,   1, 0, 0,  -1, 0, 0,
+        -0.5,  0.5,  0.5,   1, 0, 0,  -1, 0, 0,
+        -0.5,  0.5, -0.5,   1, 0, 0,  -1, 0, 0,
+    ]);
+    
+    const invaderShape = [
+        [0,0], [3,0], [4,0], [5,0], [6,0], [9,0],
+        [1,1], [2,1], [7,1], [8,1],
+        [0,2], [1,2], [2,2], [3,2], [4,2], [5,2], [6,2], [7,2], [8,2], [9,2],
+        [0,3], [2,3], [3,3], [4,3], [5,3], [6,3], [7,3], [9,3],
+        [2,4], [7,4]
+    ];
+    
+    const invaderInstanceData = new Float32Array(invaderShape.length * 3);
+    invaderShape.forEach(([x, y], i) => {
+        invaderInstanceData[i * 3 + 0] = x - 4.5;
+        invaderInstanceData[i * 3 + 1] = -y + 2.0;
+        invaderInstanceData[i * 3 + 2] = 0;
+    });
+    
+    // prettier-ignore
+    const flameVertices = new Float32Array([
+        -2.0, -4.0, 0.0, 1.0,  -1.0, -4.0, 1.0, 1.0,  -1.0, -2.5, 1.0, 0.0,
+        -2.0, -4.0, 0.0, 1.0,  -1.0, -2.5, 1.0, 0.0,  -2.0, -2.5, 0.0, 0.0,
+         1.0, -4.0, 0.0, 1.0,   2.0, -4.0, 1.0, 1.0,   2.0, -2.5, 1.0, 0.0,
+         1.0, -4.0, 0.0, 1.0,   2.0, -2.5, 1.0, 0.0,   1.0, -2.5, 0.0, 0.0,
+    ]);
+
+    const cubeVertexBuffer = device.createBuffer({
+        size: cubeVertices.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(cubeVertexBuffer, 0, cubeVertices);
+
+    const invaderInstanceBuffer = device.createBuffer({
+        size: invaderInstanceData.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(invaderInstanceBuffer, 0, invaderInstanceData);
+    
+    const flameVertexBuffer = device.createBuffer({
+        size: flameVertices.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(flameVertexBuffer, 0, flameVertices);
+    
+    // 3. SHADERS (WGSL): The code that runs on the GPU
+    //================================================================
+
+    const invaderShaderModule = device.createShaderModule({
+        label: 'Invader Shader',
+        code: `
+            struct Uniforms {
+                mvpMatrix: mat4x4<f32>,
+            };
+            @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+            struct VertexOutput {
+                @builtin(position) position: vec4<f32>,
+                @location(0) color: vec3<f32>,
+                @location(1) normal: vec3<f32>,
+            };
+
+            @vertex
+            fn vertex_main(
+                @builtin(instance_index) instance_index: u32,
+                @location(0) position: vec3<f32>,
+                @location(1) color: vec3<f32>,
+                @location(2) instance_offset: vec3<f32>,
+                @location(3) normal: vec3<f32>
+            ) -> VertexOutput {
+                var output: VertexOutput;
+                let scaled_pos = position * 1.02;
+                let model_pos = scaled_pos + instance_offset;
+                output.position = uniforms.mvpMatrix * vec4<f32>(model_pos, 1.0);
+                output.color = color;
+                output.normal = normal; 
+                return output;
+            }
+
+            @fragment
+            fn fragment_main(fragData: VertexOutput) -> @location(0) vec4<f32> {
+                let lightDirection = normalize(vec3<f32>(0.8, 1.0, 0.5));
+                let surfaceNormal = normalize(fragData.normal);
+                let diffuseIntensity = max(dot(surfaceNormal, lightDirection), 0.0);
+                let ambientLight = 0.4;
+                let lighting = ambientLight + diffuseIntensity * 0.8;
+                let finalColor = fragData.color * lighting;
+                return vec4<f32>(finalColor, 1.0);
+            }
+        `,
+    });
+    
+    const flameShaderModule = device.createShaderModule({
+        label: 'Flame Shader',
+        code: `
+            struct Uniforms {
+                mvpMatrix: mat4x4<f32>,
+                time: f32,
+            };
+            @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+            
+            struct VertexOutput {
+                @builtin(position) position: vec4<f32>,
+                @location(0) uv: vec2<f32>,
+            };
+
+            @vertex
+            fn vertex_main(
+                @location(0) position: vec2<f32>,
+                @location(1) uv: vec2<f32>
+            ) -> VertexOutput {
+                var output: VertexOutput;
+                output.position = uniforms.mvpMatrix * vec4<f32>(position, -0.7, 1.0);
+                output.uv = uv;
+                return output;
+            }
+            
+            fn random(co: vec2<f32>) -> f32 {
+                return fract(sin(dot(co.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+            }
+
+            @fragment
+            fn fragment_main(fragData: VertexOutput) -> @location(0) vec4<f32> {
+                let time = uniforms.time * 2.5;
+                var uv = fragData.uv;
+                
+                let y_distort = sin(uv.x * 10.0 + time * 2.0) * 0.05;
+                uv.y += y_distort;
+                
+                let scroll_speed1 = time * 0.8;
+                let scroll_speed2 = time * 0.5;
+                let noise1 = random(vec2(uv.x * 3.0, uv.y * 5.0 - scroll_speed1));
+                let noise2 = random(vec2(uv.x * 3.0, uv.y * 8.0 - scroll_speed2));
+                let total_noise = (noise1 + noise2) * 0.5;
+
+                let flame_shape = pow(uv.y, 1.5);
+                let edge_fade = smoothstep(0.0, 0.5, uv.x) * smoothstep(1.0, 0.5, uv.x);
+                let alpha = flame_shape * edge_fade * (total_noise + 0.2);
+
+                let hot_color = vec3(1.0, 0.9, 0.5);
+                let mid_color = vec3(1.0, 0.5, 0.0);
+                
+                let core_intensity = smoothstep(0.0, 0.4, uv.y);
+                var color = mix(mid_color, hot_color, core_intensity);
+                
+                color *= (total_noise * 0.5 + 0.5);
+
+                return vec4(color, alpha);
+            }
+        `,
+    });
+
+    // 4. PIPELINE: Configure how the GPU draws our geometry
+    //================================================================
+    
+    const depthTexture = device.createTexture({
+        size: presentationSize, // Use the scaled size
+        format: 'depth24plus',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    const uniformBufferSize = 16 * 4 + 4 * 4;
+    const uniformBuffer = device.createBuffer({
+        size: uniformBufferSize,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    
+    const bindGroupLayout = device.createBindGroupLayout({
+        entries: [{
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            buffer: {},
+        }],
+    });
+    
+    const bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [{
+            binding: 0,
+            resource: { buffer: uniformBuffer },
+        }],
+    });
+
+    const invaderPipeline = device.createRenderPipeline({
+        label: 'Invader Pipeline',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+        vertex: {
+            module: invaderShaderModule,
+            entryPoint: 'vertex_main',
+            buffers: [
+                {
+                    arrayStride: 9 * 4,
+                    attributes: [
+                        { shaderLocation: 0, offset: 0, format: 'float32x3' },
+                        { shaderLocation: 1, offset: 3 * 4, format: 'float32x3' },
+                        { shaderLocation: 3, offset: 6 * 4, format: 'float32x3' },
+                    ],
+                },
+                {
+                    arrayStride: 3 * 4,
+                    stepMode: 'instance',
+                    attributes: [
+                        { shaderLocation: 2, offset: 0, format: 'float32x3' },
+                    ],
+                },
+            ],
+        },
+        fragment: {
+            module: invaderShaderModule,
+            entryPoint: 'fragment_main',
+            targets: [{ format: canvasFormat }],
+        },
+        primitive: { topology: 'triangle-list' },
+        depthStencil: {
+            depthWriteEnabled: true,
+            depthCompare: 'less',
+            format: 'depth24plus',
+            depthBias: 2,
+            depthBiasSlopeScale: 2,
+            depthBiasClamp: 0,
+        },
+        multisample: {
+            count: 1, // Use 1 for crisp, aliased rendering
+        },
+    });
+
+    const flamePipeline = device.createRenderPipeline({
+        label: 'Flame Pipeline',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+        vertex: {
+            module: flameShaderModule,
+            entryPoint: 'vertex_main',
+            buffers: [{
+                arrayStride: 4 * 4,
+                attributes: [
+                    { shaderLocation: 0, offset: 0, format: 'float32x2' },
+                    { shaderLocation: 1, offset: 2 * 4, format: 'float32x2' },
+                ],
+            }],
+        },
+        fragment: {
+            module: flameShaderModule,
+            entryPoint: 'fragment_main',
+            targets: [{ 
+                format: canvasFormat,
+                blend: {
+                    color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                    alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                },
+            }],
+        },
+        primitive: { topology: 'triangle-list' },
+        depthStencil: {
+            depthWriteEnabled: false,
+            depthCompare: 'less',
+            format: 'depth24plus',
+        },
+    });
+
+    // 5. RENDER LOOP: Called every frame to draw the scene
+    //================================================================
+    const mvpMatrix = mat4.create();
+    const modelMatrix = mat4.create();
+    const viewMatrix = mat4.create();
+    const projectionMatrix = mat4.create();
+    
+    const aspect = presentationSize[0] / presentationSize[1];
+    mat4.perspective(projectionMatrix, Math.PI / 3, aspect, 0.1, 100.0);
+    mat4.lookAt(viewMatrix, vec3.fromValues(0, 0, 20), vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0));
+
+    let isPaused = false;
+    let rotationX = 0;
+    let rotationY = 0;
+    let lastTime = 0;
+
+    document.addEventListener('keydown', (event) => {
+        if (event.code === 'Space') {
+            isPaused = !isPaused;
+            if (!isPaused) {
+                requestAnimationFrame(drawFrame);
+            }
+        }
+    });
+
+    function drawFrame(time) {
+        if (isPaused) {
+            lastTime = 0;
+            return;
+        }
+        
+        if (lastTime > 0) {
+            const deltaTime = (time - lastTime) / 1000;
+            rotationY += deltaTime * (Math.PI / 4);
+            rotationX += deltaTime * (Math.PI / 6);
+        }
+        lastTime = time;
+
+        mat4.fromYRotation(modelMatrix, rotationY);
+        mat4.rotateX(modelMatrix, modelMatrix, rotationX);
+
+        mat4.multiply(mvpMatrix, viewMatrix, modelMatrix);
+        mat4.multiply(mvpMatrix, projectionMatrix, mvpMatrix);
+
+        device.queue.writeBuffer(uniformBuffer, 0, mvpMatrix);
+        device.queue.writeBuffer(uniformBuffer, 64, new Float32Array([time/1000]));
+        
+        const commandEncoder = device.createCommandEncoder();
+        const renderPassDescriptor = {
+            colorAttachments: [{
+                view: context.getCurrentTexture().createView(),
+                clearValue: { r: 0.05, g: 0.05, b: 0.1, a: 1.0 },
+                loadOp: 'clear',
+                storeOp: 'store',
+            }],
+            depthStencilAttachment: {
+                view: depthTexture.createView(),
+                depthClearValue: 1.0,
+                depthLoadOp: 'clear',
+                depthStoreOp: 'store',
+            },
+        };
+        
+        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+
+        passEncoder.setPipeline(invaderPipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.setVertexBuffer(0, cubeVertexBuffer);
+        passEncoder.setVertexBuffer(1, invaderInstanceBuffer);
+        passEncoder.draw(cubeVertices.length / 9, invaderShape.length, 0, 0);
+
+        passEncoder.setPipeline(flamePipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.setVertexBuffer(0, flameVertexBuffer);
+        passEncoder.draw(flameVertices.length / 4, 1, 0, 0);
+
+        passEncoder.end();
+        device.queue.submit([commandEncoder.finish()]);
+
+        requestAnimationFrame(drawFrame);
+    }
+
+    requestAnimationFrame(drawFrame);
+}
+
+main().catch(err => {
+    console.error(err);
+    document.body.innerHTML = `<div style="text-align: center; color: red; font-size: 1.2em; padding: 2em;">
+        <h2>Error</h2><p>${err.message}</p>
+        <p>Please ensure you are using a WebGPU-compatible browser (like Chrome or Edge) and that it is up-to-date.</p>
+    </div>`;
+});
