@@ -1,4 +1,4 @@
-import { createInvaderVertices, invaderShader } from './invader.js';
+import { invaderVertices, invaderIndices, invaderBaseDimensions, invaderShader } from './invader.js';
 import { createParticleSystem, particleShader } from './particle.js';
 
 // Ensure glMatrix is available
@@ -39,12 +39,17 @@ async function main() {
     //================================================================
 
     // -- Invader Geometry --
-    const invaderVertices = createInvaderVertices();
     const invaderVertexBuffer = device.createBuffer({
         size: invaderVertices.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     device.queue.writeBuffer(invaderVertexBuffer, 0, invaderVertices);
+
+    const invaderIndexBuffer = device.createBuffer({
+        size: invaderIndices.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(invaderIndexBuffer, 0, invaderIndices);
     
     // -- Particle System for 3D Flames --
     const { particleInstanceBuffer, updateParticles, getActiveParticleCount } = createParticleSystem(device);
@@ -66,12 +71,13 @@ async function main() {
     //================================================================
     const depthTexture = device.createTexture({ size: presentationSize, format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
     
-    const uniformBufferInvader = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // Buffer for mvpMatrix, color, and time
+    const uniformBufferInvader = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const uniformBufferParticles = device.createBuffer({ size: 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     const bindGroupLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: {} },
+            { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: {} },
             { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: {} },
         ],
     });
@@ -92,17 +98,16 @@ async function main() {
             entryPoint: 'vs_main',
             buffers: [
                 {
-                    arrayStride: 11 * 4, // 3 pos, 3 color, 3 normal, 2 uv
+                    arrayStride: 8 * 4, // 3 pos, 3 normal, 2 uv
                     attributes: [
                         { shaderLocation: 0, offset: 0, format: 'float32x3' }, // pos
-                        { shaderLocation: 1, offset: 3 * 4, format: 'float32x3' }, // color
-                        { shaderLocation: 3, offset: 6 * 4, format: 'float32x3' }, // normal
-                        // uv attribute would go here if we were using it
+                        { shaderLocation: 1, offset: 3 * 4, format: 'float32x3' }, // normal
+                        { shaderLocation: 2, offset: 6 * 4, format: 'float32x2' }, // uv
                     ],
                 },
             ],
         },
-        fragment: { module: invaderShaderModule, entryPoint: 'fs_main', targets: [{ format: canvasFormat }] },
+        fragment: { module: invaderShaderModule, entryPoint: 'fs_main', targets: [{ format: canvasFormat, blend: { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } } }] },
         primitive: { topology: 'triangle-list' },
         depthStencil: { depthWriteEnabled: true, depthCompare: 'less', format: 'depth24plus', depthBias: 2, depthBiasSlopeScale: 2 },
         multisample: { count: 1 },
@@ -144,6 +149,12 @@ async function main() {
     const viewMatrix = mat4.create();
     const projectionMatrix = mat4.create();
     const vpMatrix = mat4.create();
+
+    // Define the desired world-space dimensions of the invader
+    const INVADER_WIDTH = 10.0;
+    const INVADER_HEIGHT = 5.0;
+    const INVADER_DEPTH = 1.0;
+    const INVADER_COLOR = [1.0, 0.0, 0.0, 1.0]; // Red
     
     const aspect = presentationSize[0] / presentationSize[1];
     mat4.perspective(projectionMatrix, Math.PI / 3, aspect, 0.1, 100.0);
@@ -152,6 +163,7 @@ async function main() {
     let isPaused = false;
     let rotationX = 0, rotationY = 0;
     let lastTime = 0;
+    let manualTime = 0;
 
     document.addEventListener('keydown', (event) => {
         if (event.code === 'Space') {
@@ -167,16 +179,26 @@ async function main() {
         
         const deltaTime = lastTime > 0 ? (time - lastTime) / 1000 : 0.016;
         lastTime = time;
+        manualTime += deltaTime;
 
-        rotationY += deltaTime * (Math.PI / 4);
-        rotationX += deltaTime * (Math.PI / 6);
-        mat4.fromYRotation(modelMatrix, rotationY);
+        // Calculate scale factors based on desired dimensions and model's base dimensions
+        const scaleX = INVADER_WIDTH / invaderBaseDimensions.width;
+        const scaleY = INVADER_HEIGHT / invaderBaseDimensions.height;
+        const scaleZ = INVADER_DEPTH / invaderBaseDimensions.depth;
+        mat4.fromScaling(modelMatrix, [scaleX, scaleY, scaleZ]);
+
+        // rotationY += deltaTime * (Math.PI / 4);
+        // rotationX += deltaTime * (Math.PI / 6);
+        // mat4.fromYRotation(modelMatrix, rotationY);
         //mat4.rotateX(modelMatrix, modelMatrix, rotationX);
 
         mat4.multiply(vpMatrix, projectionMatrix, viewMatrix);
         mat4.multiply(mvpMatrix, vpMatrix, modelMatrix);
 
+        // Upload data to uniform buffer
         device.queue.writeBuffer(uniformBufferInvader, 0, mvpMatrix);
+        device.queue.writeBuffer(uniformBufferInvader, 64, new Float32Array(INVADER_COLOR));
+        device.queue.writeBuffer(uniformBufferInvader, 80, new Float32Array([manualTime]));
         device.queue.writeBuffer(uniformBufferParticles, 0, vpMatrix);
         
         updateParticles(deltaTime, modelMatrix);
@@ -191,7 +213,8 @@ async function main() {
         passEncoder.setPipeline(invaderPipeline);
         passEncoder.setBindGroup(0, bindGroup);
         passEncoder.setVertexBuffer(0, invaderVertexBuffer);
-        passEncoder.draw(invaderVertices.length / 11, 1, 0, 0); // 11 floats per vertex
+        passEncoder.setIndexBuffer(invaderIndexBuffer, 'uint32');
+        passEncoder.drawIndexed(invaderIndices.length, 1, 0, 0, 0);
 
         const activeParticleCount = getActiveParticleCount();
         if (activeParticleCount > 0) {

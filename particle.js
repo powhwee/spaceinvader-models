@@ -23,7 +23,7 @@ export function createParticleSystem(device) {
             p.lifetime = Math.random() * 0.8 + 0.2;
             p.lifeRemaining = p.lifetime;
             
-            const enginePos = (Math.random() > 0.5) ? [-1.5, -2.5, 0] : [1.5, -2.5, 0];
+            const enginePos = (Math.random() > 0.5) ? [-0.15, -0.25, 0] : [0.15, -0.25, 0];
             p.position = vec3.transformMat4(vec3.create(), enginePos, modelMatrix);
             
             const localVelocity = [
@@ -36,6 +36,14 @@ export function createParticleSystem(device) {
             rotationMatrix[12] = 0; // Zero out translation components
             rotationMatrix[13] = 0;
             rotationMatrix[14] = 0;
+
+            // Remove scaling from the matrix, so velocity isn't affected by model scale
+            const scaling = vec3.create();
+            mat4.getScaling(scaling, rotationMatrix);
+            if (scaling[0] !== 0 && scaling[1] !== 0 && scaling[2] !== 0) {
+                const invScale = vec3.inverse(vec3.create(), scaling);
+                mat4.scale(rotationMatrix, rotationMatrix, invScale);
+            }
 
             p.velocity = vec3.transformMat4(vec3.create(), localVelocity, rotationMatrix);
             p.size = Math.random() * 0.5 + 0.25;
